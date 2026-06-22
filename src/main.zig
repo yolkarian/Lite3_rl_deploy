@@ -52,6 +52,8 @@ fn parseArgs(it: *std.process.Args.Iterator) !deploy.types.ControllerConfig {
             config.rl_gains.kp = try std.fmt.parseFloat(f32, try nextValue(it));
         } else if (std.mem.eql(u8, arg, "--kd")) {
             config.rl_gains.kd = try std.fmt.parseFloat(f32, try nextValue(it));
+        } else if (std.mem.eql(u8, arg, "--clip-actions")) {
+            config.clip_actions = try std.fmt.parseFloat(f32, try nextValue(it));
         } else {
             std.debug.print("unknown argument: {s}\n", .{arg});
             printHelp();
@@ -79,6 +81,7 @@ fn printHelp() void {
         \\  --output-kind KIND            joint-target | action-offset | policy-action
         \\  --decimation N                policy period in SDK ticks (default 12)
         \\  --kp VALUE --kd VALUE          RL PD gains (default 20 / 0.7)
+        \\  --clip-actions VALUE           policy-action clip bound (default 12.0)
         \\  --auto-rl                     automatically StandUp then RLControl
         \\  --fixed-command VX VY WZ       normalized command, usually in [-1, 1]
         \\  --no-keyboard                 disable stdin keyboard polling

@@ -28,7 +28,7 @@ pub const Controller = struct {
         var robot = try motion.HardwareInterface.init(allocator, config.robot_ip, config.robot_port);
         errdefer robot.deinit();
 
-        var policy = try onnx.PolicySession.init(allocator, config.policy_path, config.output_kind, config.policy_action_scale);
+        var policy = try onnx.PolicySession.init(allocator, config.policy_path, config.output_kind, config.policy_action_scale, config.clip_actions);
         errdefer policy.deinit();
 
         return .{

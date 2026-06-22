@@ -111,6 +111,7 @@ pub const ControllerConfig = struct {
     stand_duration_s: f64 = 2.0,
     damping_duration_s: f64 = 3.0,
     policy_action_scale: f32 = 0.25,
+    clip_actions: f32 = 12.0,
     rl_gains: Gains = .{ .kp = 20.0, .kd = 0.7 },
     stand_gains: Gains = .{ .kp = 100.0, .kd = 2.5 },
     damping_gains: Gains = .{ .kp = 0.0, .kd = 2.5 },

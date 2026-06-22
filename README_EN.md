@@ -4,17 +4,24 @@ Zig 0.16.0 Lite3 RL deployment library and executable. The old CMake/C++ and MuJ
 
 Runtime dependencies:
 
-- `../Lite3_MotionSDK_Zig/` as the Zig motion SDK dependency
+- Lite3 Motion SDK: fetched as a Zig package dependency (see `build.zig.zon`)
 - `third_party/onnxruntime/` for ONNX Runtime C shared libraries
 
 ## Expected ONNX
 
-The runner targets ONNX files exported by `../legged-training/scripts/export_policy_onnx.py` with default deploy preprocessing/postprocessing:
+The deploy ONNX must match this I/O contract:
 
-- inputs: `raw_obs` `[B,117]`, `raw_obs_history` `[B,40,117]`
-- output: `joint_target` `[B,12]` in radians
+| item | name | shape | notes |
+|---|---|---:|---|
+| input 0 | `raw_obs` | `[B, 117]` | unnormalized observation |
+| input 1 | `raw_obs_history` | `[B, 40, 117]` | unnormalized observation history |
+| output | `joint_target` | `[B, 12]` | 12 joint PD targets in radians |
 
-Joint order: `FL, FR, HL, HR` × `HipX, HipY, Knee`.
+117-dim observation layout: `commands(3) | rpy(3) | base_angular_velocity(3) | qpos(12) | qvel(12) | position_history(3x12) | velocity_history(2x12) | action_history(2x12)`.
+
+Joint order: `FL, FR, HL, HR` x `HipX, HipY, Knee`.
+
+Default policy path: `policy/deploy/lite3_policy.onnx`.
 
 ## Build
 
@@ -26,15 +33,6 @@ zig build -Dplatform=aarch64 -Doptimize=ReleaseFast
 ```
 
 `zig-out/lib` includes ONNX Runtime and Lite3 Motion SDK shared libraries.
-
-## Export a policy
-
-```bash
-./scripts/export_policy_from_legged_training.sh \
-  ../legged-training/outputs/<run>/checkpoints/latest.eqx
-```
-
-Default output: `policy/deploy/lite3_policy.onnx`.
 
 ## Run
 

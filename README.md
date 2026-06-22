@@ -2,13 +2,13 @@
 
 这是一个 **Zig 0.16.0** 版 Lite3 强化学习策略部署库/可执行程序。项目已移除 CMake/C++ 与 MuJoCo 部署链路，运行时只保留：
 
-- `../Lite3_MotionSDK_Zig/`：Lite3 Zig/C wrapper motion SDK（构建时作为 Zig dependency 引入）
+- Lite3 Motion SDK：作为 Zig package dependency 引入（见 `build.zig.zon`）
 - `third_party/onnxruntime/`：ONNX Runtime C 动态库
 - `src/`：Zig 部署库与 `lite3-deploy` 可执行程序
 
 ## ONNX 格式
 
-默认适配 `../legged-training/scripts/export_policy_onnx.py` 导出的 deploy graph：
+部署 ONNX 需满足以下 I/O 约定：
 
 | 项 | 名称 | shape | 说明 |
 |---|---|---:|---|
@@ -16,7 +16,11 @@
 | input 1 | `raw_obs_history` | `[B, 40, 117]` | 未归一化观测历史 |
 | output | `joint_target` | `[B, 12]` | 12 个关节 PD target，单位 rad |
 
-关节顺序与 `legged-training/configs/env/lite3.yaml` 一致：`FL, FR, HL, HR` × `HipX, HipY, Knee`。
+观测向量 117 维布局：`commands(3) | rpy(3) | base_angular_velocity(3) | qpos(12) | qvel(12) | position_history(3×12) | velocity_history(2×12) | action_history(2×12)`。
+
+关节顺序：`FL, FR, HL, HR` × `HipX, HipY, Knee`。
+
+默认策略路径：`policy/deploy/lite3_policy.onnx`。
 
 ## 构建
 
@@ -34,20 +38,6 @@ zig build -Dplatform=aarch64 -Doptimize=ReleaseFast
 - `zig-out/lib/liblite3_deploy.a`
 - `zig-out/bin/lite3-deploy`
 - `zig-out/lib/*.so`：已复制 ONNX Runtime 与 Lite3 Motion SDK 动态库
-
-## 从 legged-training 导出策略
-
-```bash
-./scripts/export_policy_from_legged_training.sh \
-  ../legged-training/outputs/<run>/checkpoints/latest.eqx
-```
-
-默认输出：
-
-```text
-policy/deploy/lite3_policy.onnx
-policy/deploy/lite3_policy.metadata.json
-```
 
 ## 运行
 
@@ -97,7 +87,7 @@ LD_LIBRARY_PATH=lib ./bin/lite3-deploy --policy policy/deploy/lite3_policy.onnx
 
 ## Zig 库用法
 
-在其他 Zig 项目中可通过 `build.zig.zon` path dependency 引入本库，然后：
+在其他 Zig 项目中可通过 `build.zig.zon` dependency 引入本库，然后：
 
 ```zig
 const lite3 = @import("lite3_deploy");
@@ -114,5 +104,5 @@ try controller.run();
 
 - MuJoCo sim/deploy pipeline
 - 旧 CMake/C++ state machine 与 policy runner
-- 旧 `third_party/Lite3_MotionSDK`，改用 `../Lite3_MotionSDK_Zig/`
-- PyTorch `pt2onnx.py`，改用 `../legged-training/scripts/export_policy_onnx.py`
+- 旧 vendored Lite3 Motion SDK，改用 Zig package dependency
+- 旧 PyTorch `pt2onnx.py` 转换脚本

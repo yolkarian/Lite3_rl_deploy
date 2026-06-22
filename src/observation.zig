@@ -18,8 +18,11 @@ pub const ObservationBuilder = struct {
         }
         for (0..types.action_history_steps) |i| self.action_history[i] = initial_offset;
 
-        const obs = self.makeRawObservation(state, .{});
-        for (0..types.obs_history_horizon) |i| self.obs_history[i] = obs;
+        // Match legged-training: the 40-step observation history buffer is
+        // zero-initialized at episode reset (ObservationHistoryBuffer uses
+        // torch.zeros, reset_ids zeros per-env, eval calls write_full(0.0)).
+        // The first policy call must see [0 x 39, obs_0], not [obs_0 x 40].
+        self.obs_history = std.mem.zeroes(types.RawObservationHistory);
         self.initialized = true;
     }
 
@@ -103,4 +106,22 @@ test "raw observation layout dimension" {
     try std.testing.expectEqual(@as(f32, -0.2), obs[1]);
     try std.testing.expectEqual(@as(f32, 0.3), obs[2]);
     try std.testing.expectEqual(@as(f32, types.default_joint_positions[0]), obs[9]);
+}
+
+test "reset zeroes obs_history; first inference sees [0 x 39, obs_0]" {
+    var builder = ObservationBuilder{};
+    var state = types.RobotState{};
+    state.joint_position = types.default_joint_positions;
+    builder.reset(state);
+
+    // After reset the 40-step history buffer is all zeros.
+    for (builder.obs_history[0 .. types.obs_history_horizon - 1]) |entry| {
+        try std.testing.expectEqual(@as(f32, 0.0), entry[0]);
+    }
+
+    // First inference call rolls zeros left and writes obs_0 at the last slot.
+    const first_obs = builder.appendForInference(state, .{ .linear_x = 0.5 });
+    try std.testing.expectEqual(@as(f32, 0.5), builder.obs_history[types.obs_history_horizon - 1][0]);
+    try std.testing.expectEqual(@as(f32, 0.0), builder.obs_history[0][0]);
+    try std.testing.expectEqual(first_obs[0], builder.obs_history[types.obs_history_horizon - 1][0]);
 }

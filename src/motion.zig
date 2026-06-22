@@ -8,13 +8,6 @@ const MotionError = error{
     StateUnavailable,
 };
 
-fn onMessageUpdate(code: c_int, ptr: ?*anyopaque) callconv(.c) void {
-    if (code != 0x0906) return;
-    const raw = ptr orelse return;
-    const updated: *bool = @ptrCast(@alignCast(raw));
-    updated.* = true;
-}
-
 pub const HardwareInterface = struct {
     allocator: std.mem.Allocator,
     robot_ip_z: [:0]u8,
@@ -22,7 +15,6 @@ pub const HardwareInterface = struct {
     receiver: *sdk.ReceiverHandle,
     data: ?[*c]sdk.RobotData = null,
     command: sdk.RobotCmd = std.mem.zeroes(sdk.RobotCmd),
-    message_updated: bool = false,
     started: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, robot_ip: []const u8, robot_port: u16) !HardwareInterface {
@@ -35,7 +27,6 @@ pub const HardwareInterface = struct {
         const sender = sdk.Sender_createWithIpPort(ip_z.ptr, robot_port) orelse return MotionError.SenderCreateFailed;
         errdefer sdk.Sender_destroy(sender);
 
-        sdk.Receiver_registerCallback(receiver, onMessageUpdate, null);
         sdk.Sender_robotStateInit(sender);
 
         return .{
@@ -55,7 +46,6 @@ pub const HardwareInterface = struct {
 
     pub fn start(self: *HardwareInterface) void {
         if (self.started) return;
-        sdk.Receiver_registerCallback(self.receiver, onMessageUpdate, &self.message_updated);
         self.data = sdk.Receiver_getState(self.receiver);
         sdk.Receiver_startWork(self.receiver);
         sdk.Sender_robotStateInit(self.sender);

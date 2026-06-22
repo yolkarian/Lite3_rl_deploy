@@ -34,12 +34,14 @@ pub const PolicySession = struct {
     model_path_z: [:0]u8,
     output_kind: types.PolicyOutputKind,
     action_scale: f32,
+    clip_actions: f32,
 
     pub fn init(
         allocator: std.mem.Allocator,
         model_path: []const u8,
         output_kind: types.PolicyOutputKind,
         action_scale: f32,
+        clip_actions: f32,
     ) !PolicySession {
         const model_path_z = try allocator.dupeZ(u8, model_path);
         errdefer allocator.free(model_path_z);
@@ -53,6 +55,7 @@ pub const PolicySession = struct {
             .model_path_z = model_path_z,
             .output_kind = output_kind,
             .action_scale = action_scale,
+            .clip_actions = clip_actions,
         };
         errdefer self.deinit();
 
@@ -142,7 +145,7 @@ pub const PolicySession = struct {
             result[index] = switch (self.output_kind) {
                 .joint_target => value,
                 .action_offset => types.default_joint_positions[index] + value,
-                .policy_action => types.default_joint_positions[index] + types.clamp(value, -12.0, 12.0) * self.action_scale,
+                .policy_action => types.default_joint_positions[index] + types.clamp(value, -self.clip_actions, self.clip_actions) * self.action_scale,
             };
         }
         return result;
