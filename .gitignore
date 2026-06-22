@@ -1,8 +1,34 @@
-build
+# Zig build outputs
+zig-out/
+.zig-cache/
+zig-pkg/
+
+# Legacy/local build outputs
+build/
+cmake-build-*/
+
+# Editor / OS files
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Logs / temporary files
+*.log
+*.tmp
 *.zip
-.vscode
-
-
-third_party/libtorch
-third_party/x30_motion_sdk
+core
+core.*
 **/tmp/*
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Local deploy artifacts (keep docs/placeholders)
+policy/deploy/*
+!policy/deploy/README.md
+!policy/deploy/.gitkeep

@@ -1,0 +1,24 @@
+.{
+    .name = .lite3_rl_deploy_zig,
+    .version = "0.2.0",
+    .fingerprint = 0x24ed6175ad95c340,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .lite3_motion_sdk = .{
+            .url = "git+https://github.com/yolkarian/Lite3_MotionSDK_Zig.git",
+            .hash = "lite3_motion_sdk-0.1.0-vItXglkxlAD6pAQ5bK5fMsmM5xFec_h8Liq7AQac26z_",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "policy",
+        "scripts",
+        "third_party/onnxruntime",
+        "README.md",
+        "README_EN.md",
+        "AGENTS.md",
+        "LICENSE",
+    },
+}
