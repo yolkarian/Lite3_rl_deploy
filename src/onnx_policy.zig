@@ -44,7 +44,6 @@ pub const PolicySession = struct {
         clip_actions: f32,
     ) !PolicySession {
         const model_path_z = try allocator.dupeZ(u8, model_path);
-        errdefer allocator.free(model_path_z);
 
         const base = c.OrtGetApiBase();
         const api = base.*.GetApi.?(c.ORT_API_VERSION);
@@ -59,7 +58,7 @@ pub const PolicySession = struct {
         };
         errdefer self.deinit();
 
-        try self.check(api.*.CreateEnv.?(c.ORT_LOGGING_LEVEL_WARNING, "lite3-deploy", &self.env));
+        try self.check(api.*.CreateEnv.?(c.ORT_LOGGING_LEVEL_ERROR, "lite3-deploy", &self.env));
         try self.check(api.*.CreateSessionOptions.?(&self.session_options));
         try self.check(api.*.SetIntraOpNumThreads.?(self.session_options, 1));
         try self.check(api.*.SetSessionGraphOptimizationLevel.?(self.session_options, c.ORT_ENABLE_ALL));
@@ -90,8 +89,8 @@ pub const PolicySession = struct {
         defer if (history_value) |value| self.api.*.ReleaseValue.?(value);
         defer if (output_value) |value| self.api.*.ReleaseValue.?(value);
 
-        var obs_shape = [_]i64{ 1, @as(i64, @intCast(types.raw_obs_dim)) };
-        var history_shape = [_]i64{ 1, @as(i64, @intCast(types.obs_history_horizon)), @as(i64, @intCast(types.raw_obs_dim)) };
+        var obs_shape = [_]i64{@as(i64, @intCast(types.raw_obs_dim))};
+        var history_shape = [_]i64{ @as(i64, @intCast(types.obs_history_horizon)), @as(i64, @intCast(types.raw_obs_dim)) };
 
         try self.check(self.api.*.CreateTensorWithDataAsOrtValue.?(
             self.memory_info,
@@ -179,3 +178,24 @@ pub const PolicySession = struct {
         return PolicyError.OnnxRuntime;
     }
 };
+
+test "default deploy ONNX runs with single-sample tensors" {
+    var session = try PolicySession.init(
+        std.testing.allocator,
+        "policy/deploy/lite3_policy.onnx",
+        .joint_target,
+        0.25,
+        12.0,
+    );
+    defer session.deinit();
+
+    var raw_obs = std.mem.zeroes(types.RawObservation);
+    var raw_obs_history = std.mem.zeroes(types.RawObservationHistory);
+    const target = try session.run(&raw_obs, &raw_obs_history);
+
+    for (target, 0..) |value, index| {
+        try std.testing.expect(std.math.isFinite(value));
+        try std.testing.expect(value >= types.joint_target_lower[index] - 1.0e-5);
+        try std.testing.expect(value <= types.joint_target_upper[index] + 1.0e-5);
+    }
+}

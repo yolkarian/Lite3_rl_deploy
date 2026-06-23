@@ -75,7 +75,7 @@ pub const ObservationBuilder = struct {
         return obs;
     }
 
-    pub fn updateAfterPolicy(self: *ObservationBuilder, state: types.RobotState, action_offset: types.JointVector) void {
+    pub fn advanceAfterObservation(self: *ObservationBuilder, state: types.RobotState, previous_action_offset: types.JointVector) void {
         rollJointHistory(types.position_history_steps, &self.position_history);
         self.position_history[types.position_history_steps - 1] = state.joint_position;
 
@@ -83,7 +83,7 @@ pub const ObservationBuilder = struct {
         self.velocity_history[types.velocity_history_steps - 1] = state.joint_velocity;
 
         rollJointHistory(types.action_history_steps, &self.action_history);
-        self.action_history[types.action_history_steps - 1] = action_offset;
+        self.action_history[types.action_history_steps - 1] = previous_action_offset;
     }
 };
 
@@ -124,4 +124,38 @@ test "reset zeroes obs_history; first inference sees [0 x 39, obs_0]" {
     try std.testing.expectEqual(@as(f32, 0.5), builder.obs_history[types.obs_history_horizon - 1][0]);
     try std.testing.expectEqual(@as(f32, 0.0), builder.obs_history[0][0]);
     try std.testing.expectEqual(first_obs[0], builder.obs_history[types.obs_history_horizon - 1][0]);
+}
+
+test "joint and action histories lag the current observation like training" {
+    var builder = ObservationBuilder{};
+    var state0 = types.RobotState{};
+    state0.joint_position = types.default_joint_positions;
+    builder.reset(state0);
+
+    const initial_offset = std.mem.zeroes(types.JointVector);
+    var action0 = std.mem.zeroes(types.JointVector);
+    action0[0] = 0.25;
+
+    const obs0 = builder.appendForInference(state0, .{});
+    try std.testing.expectEqual(types.default_joint_positions[0], obs0[33]);
+    try std.testing.expectEqual(@as(f32, 0.0), obs0[93]);
+    builder.advanceAfterObservation(state0, initial_offset);
+
+    var state1 = state0;
+    state1.joint_position[0] = 0.1;
+    state1.joint_velocity[0] = 0.2;
+    const obs1 = builder.appendForInference(state1, .{});
+    try std.testing.expectEqual(types.default_joint_positions[0], obs1[33]);
+    try std.testing.expectEqual(@as(f32, 0.0), obs1[93]);
+    try std.testing.expectEqual(@as(f32, 0.0), obs1[105]);
+    builder.advanceAfterObservation(state1, action0);
+
+    var state2 = state1;
+    state2.joint_position[0] = 0.2;
+    const obs2 = builder.appendForInference(state2, .{});
+    try std.testing.expectEqual(types.default_joint_positions[0], obs2[33]);
+    try std.testing.expectEqual(types.default_joint_positions[0], obs2[45]);
+    try std.testing.expectEqual(@as(f32, 0.1), obs2[57]);
+    try std.testing.expectEqual(@as(f32, 0.0), obs2[93]);
+    try std.testing.expectEqual(@as(f32, 0.25), obs2[105]);
 }

@@ -24,12 +24,21 @@ pub const joint_names = [_][]const u8{
     "HR_HipX_joint", "HR_HipY_joint", "HR_Knee_joint",
 };
 
-/// Default joint order/values match `../legged-training/configs/env/lite3.yaml`.
+/// Policy default joint order/values match `../legged-training/configs/env/lite3.yaml`.
 pub const default_joint_positions: JointVector = .{
     0.0, -1.0, 1.8,
     0.0, -1.0, 1.8,
     0.0, -1.0, 1.8,
     0.0, -1.0, 1.8,
+};
+
+/// Stand-up target from legacy `StandUpState` IK after commit 7871b47:
+/// thigh=0.20 m, shank=0.21 m, stand_height=0.33 m.
+pub const stand_joint_positions: JointVector = .{
+    0.0, -0.653535, 1.271092,
+    0.0, -0.653535, 1.271092,
+    0.0, -0.653535, 1.271092,
+    0.0, -0.653535, 1.271092,
 };
 
 pub const joint_target_lower: JointVector = .{

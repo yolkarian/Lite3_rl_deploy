@@ -181,6 +181,7 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
+    run_cmd.setEnvironmentVariable("LD_LIBRARY_PATH", b.getInstallPath(.lib, ""));
     if (b.args) |args| run_cmd.addArgs(args);
 
     const run_step = b.step("run", "Run Lite3 hardware deployment executable");
@@ -189,6 +190,7 @@ pub fn build(b: *std.Build) void {
     const unit_tests = b.addTest(.{ .root_module = deploy_module });
     const test_cmd = b.addRunArtifact(unit_tests);
     test_cmd.step.dependOn(b.getInstallStep());
+    test_cmd.setEnvironmentVariable("LD_LIBRARY_PATH", b.getInstallPath(.lib, ""));
 
     const test_step = b.step("test", "Run Zig unit tests");
     test_step.dependOn(&test_cmd.step);

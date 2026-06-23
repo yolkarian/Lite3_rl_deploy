@@ -9,13 +9,15 @@ Runtime dependencies:
 
 ## Expected ONNX
 
-The deploy ONNX must match this I/O contract:
+The deploy ONNX must match the default single-sample policy export (do not use a batched/fixed-batch export):
 
 | item | name | shape | notes |
 |---|---|---:|---|
-| input 0 | `raw_obs` | `[B, 117]` | unnormalized observation |
-| input 1 | `raw_obs_history` | `[B, 40, 117]` | unnormalized observation history |
-| output | `joint_target` | `[B, 12]` | 12 joint PD targets in radians |
+| input 0 | `raw_obs` | `[117]` | unnormalized observation |
+| input 1 | `raw_obs_history` | `[40, 117]` | unnormalized observation history |
+| output | `joint_target` | `[12]` | 12 joint PD targets in radians |
+
+That default export embeds observation scale/clip, action clip/scale, default joint positions, and joint-target clamping. Zig passes raw observations and does not run a separate normalizer.
 
 117-dim observation layout: `commands(3) | rpy(3) | base_angular_velocity(3) | qpos(12) | qvel(12) | position_history(3x12) | velocity_history(2x12) | action_history(2x12)`.
 
@@ -28,6 +30,7 @@ Default policy path: `policy/deploy/lite3_policy.onnx`.
 ```bash
 zig version   # must be 0.16.0
 zig build
+zig build test # includes the default ONNX smoke test
 zig build -Doptimize=ReleaseFast
 zig build -Dplatform=aarch64 -Doptimize=ReleaseFast
 ```

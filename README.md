@@ -8,13 +8,15 @@
 
 ## ONNX 格式
 
-部署 ONNX 需满足以下 I/O 约定：
+部署 ONNX 需匹配训练导出脚本默认生成的 single-sample I/O 约定（不要使用 batched/fixed-batch 导出）：
 
 | 项 | 名称 | shape | 说明 |
 |---|---|---:|---|
-| input 0 | `raw_obs` | `[B, 117]` | 未归一化观测 |
-| input 1 | `raw_obs_history` | `[B, 40, 117]` | 未归一化观测历史 |
-| output | `joint_target` | `[B, 12]` | 12 个关节 PD target，单位 rad |
+| input 0 | `raw_obs` | `[117]` | 未归一化观测 |
+| input 1 | `raw_obs_history` | `[40, 117]` | 未归一化观测历史 |
+| output | `joint_target` | `[12]` | 12 个关节 PD target，单位 rad |
+
+该默认导出已在 ONNX 内包含观测 scale/clip、action clip/scale、default joint position 与 joint target clamp；Zig 侧只传入 raw observation，不再做 normalizer 处理。
 
 观测向量 117 维布局：`commands(3) | rpy(3) | base_angular_velocity(3) | qpos(12) | qvel(12) | position_history(3×12) | velocity_history(2×12) | action_history(2×12)`。
 
@@ -22,11 +24,19 @@
 
 默认策略路径：`policy/deploy/lite3_policy.onnx`。
 
+默认值位置：
+
+- 默认 policy 路径在 `src/main.zig` 的 `parseArgs()` 中设置。
+- 默认机器人 IP/端口在 `src/types.zig` 的 `ControllerConfig` 中设置：`192.168.2.1:43893`。
+
+如需长期修改默认值，改上述源码；临时覆盖用命令行参数 `--policy`、`--robot-ip`、`--robot-port`。
+
 ## 构建
 
 ```bash
 zig version   # 必须是 0.16.0
 zig build     # x86_64 本机调试构建
+zig build test # 包含默认 ONNX smoke test
 zig build -Doptimize=ReleaseFast
 
 # 交叉构建机器人端 aarch64 Linux

@@ -87,8 +87,10 @@ pub const Controller = struct {
             },
             .rl_control => {
                 self.obs_builder.reset(robot_state);
-                self.last_policy_target = types.default_joint_positions;
-                self.last_policy_offset = std.mem.zeroes(types.JointVector);
+                self.last_policy_target = robot_state.joint_position;
+                for (0..types.dof_count) |index| {
+                    self.last_policy_offset[index] = robot_state.joint_position[index] - types.default_joint_positions[index];
+                }
             },
             else => {},
         }
@@ -133,7 +135,7 @@ pub const Controller = struct {
             const pos = math.cubicPosition(
                 self.stand_start_position[index],
                 self.stand_start_velocity[index],
-                types.default_joint_positions[index],
+                types.stand_joint_positions[index],
                 0.0,
                 @floatCast(elapsed),
                 @floatCast(self.config.stand_duration_s),
@@ -141,7 +143,7 @@ pub const Controller = struct {
             const vel = math.cubicVelocity(
                 self.stand_start_position[index],
                 self.stand_start_velocity[index],
-                types.default_joint_positions[index],
+                types.stand_joint_positions[index],
                 0.0,
                 @floatCast(elapsed),
                 @floatCast(self.config.stand_duration_s),
@@ -179,6 +181,9 @@ pub const Controller = struct {
 
         if (self.tick_count % self.config.policy_decimation == 0) {
             var raw_obs = self.obs_builder.appendForInference(robot_state, command_for_policy);
+            const previous_policy_offset = self.last_policy_offset;
+            self.obs_builder.advanceAfterObservation(robot_state, previous_policy_offset);
+
             const start_ns = monotonicNano();
             self.last_policy_target = try self.policy.run(&raw_obs, &self.obs_builder.obs_history);
             const end_ns = monotonicNano();
@@ -187,7 +192,6 @@ pub const Controller = struct {
             for (0..types.dof_count) |index| {
                 self.last_policy_offset[index] = self.last_policy_target[index] - types.default_joint_positions[index];
             }
-            self.obs_builder.updateAfterPolicy(robot_state, self.last_policy_offset);
         }
 
         var low_level = types.zeroCommand();

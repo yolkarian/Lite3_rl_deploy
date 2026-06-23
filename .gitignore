@@ -32,3 +32,4 @@ core.*
 policy/deploy/*
 !policy/deploy/README.md
 !policy/deploy/.gitkeep
+!policy/deploy/lite3_policy.onnx
