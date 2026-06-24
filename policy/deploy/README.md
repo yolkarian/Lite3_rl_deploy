@@ -1,16 +1,14 @@
 # Lite3 deploy policies
 
-Place deploy ONNX files here.
-
-Expected default path:
+This directory is kept for alternative exports. The current original-compatible Zig runner defaults to:
 
 ```text
-policy/deploy/lite3_policy.onnx
+policy/ppo/policy.onnx
 ```
 
-The Zig runner expects the default single-sample deploy graph I/O contract:
+Expected ONNX I/O for the original-compatible runner:
 
 - inputs: `raw_obs` `[117]`, `raw_obs_history` `[40,117]`
-- output: `joint_target` `[12]`
+- output: `policy_action` `[12]`
 
-The default export includes normalizer/pre-postprocessing inside ONNX. Use `scripts/export_policy_from_legged_training.sh` to export a policy from a training checkpoint.
+Zig applies the same postprocessing as the original C++ deployment: clip action, multiply by `0.25`, add policy default joint positions, and clamp joint targets. DOF position observations are absolute joint angles, not offsets.

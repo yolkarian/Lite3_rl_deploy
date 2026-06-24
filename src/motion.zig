@@ -15,6 +15,7 @@ pub const HardwareInterface = struct {
     receiver: *sdk.ReceiverHandle,
     data: ?[*c]sdk.RobotData = null,
     command: sdk.RobotCmd = std.mem.zeroes(sdk.RobotCmd),
+    last_command: types.LowLevelCommand = types.zeroCommand(),
     started: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, robot_ip: []const u8, robot_port: u16) !HardwareInterface {
@@ -46,16 +47,14 @@ pub const HardwareInterface = struct {
 
     pub fn start(self: *HardwareInterface) void {
         if (self.started) return;
-        self.data = sdk.Receiver_getState(self.receiver);
         sdk.Receiver_startWork(self.receiver);
-        sdk.Sender_robotStateInit(self.sender);
+        self.data = sdk.Receiver_getState(self.receiver);
         sdk.Sender_controlGet(self.sender, sdk.SDK);
         self.started = true;
     }
 
     pub fn stop(self: *HardwareInterface) void {
         if (!self.started) return;
-        self.send(types.zeroCommand()) catch {};
         sdk.Sender_controlGet(self.sender, sdk.ROBOT);
         self.started = false;
     }
@@ -74,10 +73,11 @@ pub const HardwareInterface = struct {
             imu.angle_pitch * types.degrees_to_radians,
             imu.angle_yaw * types.degrees_to_radians,
         };
-        state.angular_velocity_rad_s = .{
-            imu.angular_velocity_roll * types.degrees_to_radians,
-            imu.angular_velocity_pitch * types.degrees_to_radians,
-            imu.angular_velocity_yaw * types.degrees_to_radians,
+        // Original C++ deploy forwards these values without converting units.
+        state.angular_velocity = .{
+            imu.angular_velocity_roll,
+            imu.angular_velocity_pitch,
+            imu.angular_velocity_yaw,
         };
         state.linear_acc_m_s2 = .{ imu.acc_x, imu.acc_y, imu.acc_z };
 
@@ -98,6 +98,11 @@ pub const HardwareInterface = struct {
             self.command.unnamed_0.joint_cmd[index].velocity = joint_command.velocity;
             self.command.unnamed_0.joint_cmd[index].torque = joint_command.torque;
         }
+        self.last_command = command;
         sdk.Sender_sendCmd(self.sender, &self.command);
+    }
+
+    pub fn getLastCommand(self: *const HardwareInterface) types.LowLevelCommand {
+        return self.last_command;
     }
 };

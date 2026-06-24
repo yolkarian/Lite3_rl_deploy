@@ -1,5 +1,6 @@
 pub const types = @import("types.zig");
 pub const math = @import("math.zig");
+pub const standup = @import("standup.zig");
 pub const motion = @import("motion.zig");
 pub const observation = @import("observation.zig");
 pub const onnx_policy = @import("onnx_policy.zig");

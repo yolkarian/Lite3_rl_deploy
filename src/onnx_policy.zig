@@ -12,17 +12,7 @@ pub const PolicyError = error{
 };
 
 const input_names = [_][*:0]const u8{ "raw_obs", "raw_obs_history" };
-const joint_target_output_names = [_][*:0]const u8{"joint_target"};
-const action_offset_output_names = [_][*:0]const u8{"action_offset"};
-const policy_action_output_names = [_][*:0]const u8{"policy_action"};
-
-fn outputNamesForKind(kind: types.PolicyOutputKind) *const [1][*:0]const u8 {
-    return switch (kind) {
-        .joint_target => &joint_target_output_names,
-        .action_offset => &action_offset_output_names,
-        .policy_action => &policy_action_output_names,
-    };
-}
+const output_names = [_][*:0]const u8{"policy_action"};
 
 pub const PolicySession = struct {
     allocator: std.mem.Allocator,
@@ -32,18 +22,11 @@ pub const PolicySession = struct {
     session: ?*c.OrtSession = null,
     memory_info: ?*c.OrtMemoryInfo = null,
     model_path_z: [:0]u8,
-    output_kind: types.PolicyOutputKind,
-    action_scale: f32,
     clip_actions: f32,
 
-    pub fn init(
-        allocator: std.mem.Allocator,
-        model_path: []const u8,
-        output_kind: types.PolicyOutputKind,
-        action_scale: f32,
-        clip_actions: f32,
-    ) !PolicySession {
+    pub fn init(allocator: std.mem.Allocator, model_path: []const u8, clip_actions: f32) !PolicySession {
         const model_path_z = try allocator.dupeZ(u8, model_path);
+        std.debug.print("[ONNX INIT] Loading model: {s}\n", .{model_path});
 
         const base = c.OrtGetApiBase();
         const api = base.*.GetApi.?(c.ORT_API_VERSION);
@@ -52,19 +35,20 @@ pub const PolicySession = struct {
             .allocator = allocator,
             .api = api,
             .model_path_z = model_path_z,
-            .output_kind = output_kind,
-            .action_scale = action_scale,
             .clip_actions = clip_actions,
         };
         errdefer self.deinit();
 
-        try self.check(api.*.CreateEnv.?(c.ORT_LOGGING_LEVEL_ERROR, "lite3-deploy", &self.env));
+        try self.check(api.*.CreateEnv.?(c.ORT_LOGGING_LEVEL_WARNING, "ONNXPolicy", &self.env));
         try self.check(api.*.CreateSessionOptions.?(&self.session_options));
         try self.check(api.*.SetIntraOpNumThreads.?(self.session_options, 1));
         try self.check(api.*.SetSessionGraphOptimizationLevel.?(self.session_options, c.ORT_ENABLE_ALL));
         try self.check(api.*.CreateCpuMemoryInfo.?(c.OrtArenaAllocator, c.OrtMemTypeDefault, &self.memory_info));
         try self.check(api.*.CreateSession.?(self.env, self.model_path_z.ptr, self.session_options, &self.session));
+        std.debug.print("[ONNX INIT] Model loaded successfully.\n", .{});
+        self.displayPolicyInfo();
 
+        try self.warmup();
         return self;
     }
 
@@ -78,6 +62,31 @@ pub const PolicySession = struct {
     }
 
     pub fn run(
+        self: *PolicySession,
+        raw_obs: *types.RawObservation,
+        raw_obs_history: *types.RawObservationHistory,
+    ) !types.JointVector {
+        const policy_action = try self.runPolicyAction(raw_obs, raw_obs_history);
+        return self.postprocessPolicyAction(policy_action);
+    }
+
+    fn warmup(self: *PolicySession) !void {
+        var raw_obs = std.mem.zeroes(types.RawObservation);
+        var raw_history = std.mem.zeroes(types.RawObservationHistory);
+        _ = try self.run(&raw_obs, &raw_history);
+        std.debug.print("test_onnx ONNX policy network test success\n", .{});
+        _ = try self.run(&raw_obs, &raw_history);
+        std.debug.print("test_onnx ONNX policy network test success\n", .{});
+    }
+
+    fn displayPolicyInfo(self: *PolicySession) void {
+        std.debug.print("ONNX policy: test_onnx\n", .{});
+        std.debug.print("path: {s}\n", .{self.model_path_z});
+        std.debug.print("raw_obs_dim: {}, obs_history: {}x{}, action_dim: {}\n", .{ types.raw_obs_dim, types.obs_history_horizon, types.raw_obs_dim, types.action_dim });
+        std.debug.print("ONNX output: raw policy_action; Zig applies action_scale + default_pos\n", .{});
+    }
+
+    fn runPolicyAction(
         self: *PolicySession,
         raw_obs: *types.RawObservation,
         raw_obs_history: *types.RawObservationHistory,
@@ -119,8 +128,8 @@ pub const PolicySession = struct {
             @ptrCast(&input_names),
             @ptrCast(&ort_inputs),
             ort_inputs.len,
-            @ptrCast(outputNamesForKind(self.output_kind)),
-            1,
+            @ptrCast(&output_names),
+            output_names.len,
             @ptrCast(&ort_outputs),
         ));
         output_value = ort_outputs[0];
@@ -129,25 +138,22 @@ pub const PolicySession = struct {
         try self.check(self.api.*.GetTensorMutableData.?(output_value, &data_ptr));
         const action_ptr: [*]f32 = @ptrCast(@alignCast(data_ptr orelse return PolicyError.InvalidOutputSize));
 
-        var output = try self.readAndPostprocessOutput(output_value, action_ptr);
-        types.clampJointTargets(&output);
-        return output;
-    }
-
-    fn readAndPostprocessOutput(self: *PolicySession, output_value: ?*c.OrtValue, action_ptr: [*]f32) !types.JointVector {
         const output_len = try self.outputElementCount(output_value);
         if (output_len < types.action_dim) return PolicyError.InvalidOutputSize;
 
-        var result: types.JointVector = undefined;
+        var action: types.JointVector = undefined;
+        for (0..types.action_dim) |index| action[index] = action_ptr[index];
+        return action;
+    }
+
+    fn postprocessPolicyAction(self: *PolicySession, policy_action: types.JointVector) types.JointVector {
+        var target: types.JointVector = undefined;
         for (0..types.action_dim) |index| {
-            const value = action_ptr[index];
-            result[index] = switch (self.output_kind) {
-                .joint_target => value,
-                .action_offset => types.default_joint_positions[index] + value,
-                .policy_action => types.default_joint_positions[index] + types.clamp(value, -self.clip_actions, self.clip_actions) * self.action_scale,
-            };
+            const clipped_action = types.clamp(policy_action[index], -self.clip_actions, self.clip_actions);
+            target[index] = types.policy_default_joint_positions[index] + types.policy_action_scales[index] * clipped_action;
         }
-        return result;
+        types.clampJointTargets(&target);
+        return target;
     }
 
     fn outputElementCount(self: *PolicySession, output_value: ?*c.OrtValue) !usize {
@@ -179,14 +185,8 @@ pub const PolicySession = struct {
     }
 };
 
-test "default deploy ONNX runs with single-sample tensors" {
-    var session = try PolicySession.init(
-        std.testing.allocator,
-        "policy/deploy/lite3_policy.onnx",
-        .joint_target,
-        0.25,
-        12.0,
-    );
+test "original ONNX policy_action output runs and postprocesses to joint targets" {
+    var session = try PolicySession.init(std.testing.allocator, "policy/ppo/policy.onnx", 12.0);
     defer session.deinit();
 
     var raw_obs = std.mem.zeroes(types.RawObservation);

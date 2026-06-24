@@ -12,4 +12,4 @@ ssh "${ROBOT_HOST}" "mkdir -p ${REMOTE_DIR}"
 scp -r zig-out/bin zig-out/lib policy "${ROBOT_HOST}:${REMOTE_DIR}/"
 
 echo "Deployed to ${ROBOT_HOST}:${REMOTE_DIR}"
-echo "Run on robot: cd ${REMOTE_DIR} && LD_LIBRARY_PATH=lib ./bin/lite3-deploy --policy policy/deploy/lite3_policy.onnx"
+echo "Run on robot: cd ${REMOTE_DIR} && LD_LIBRARY_PATH=lib ./bin/lite3-deploy --policy policy/ppo/policy.onnx"

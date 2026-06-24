@@ -16,20 +16,20 @@ The deployment ONNX model must match the default single-sample I/O convention ge
 |---|---|---:|---|
 | input 0 | `raw_obs` | `[117]` | unnormalized observation |
 | input 1 | `raw_obs_history` | `[40, 117]` | unnormalized observation history |
-| output | `joint_target` | `[12]` | 12 joint PD targets, in radians |
+| output | `policy_action` | `[12]` | raw neural policy action |
 
-The default export embeds observation scale/clip, action clip/scale, default joint positions, and joint-target clamping inside the ONNX graph. The Zig side only feeds raw observations and does not run a separate normalizer.
+This Zig rewrite follows the original C++ deployment behavior: ONNX Runtime reads `policy_action`, then Zig clips actions to `[-12, 12]`, applies `0.25` action scale, adds policy default joint positions `{0, -1, 1.8}`, and clamps joint targets.
 
-117-dimensional observation layout: `commands(3) | rpy(3) | base_angular_velocity(3) | qpos(12) | qvel(12) | position_history(3×12) | velocity_history(2×12) | action_history(2×12)`.
+117-dimensional observation layout: `commands(3) | rpy(3) | base_angular_velocity(3) | qpos(12) | qvel(12) | position_history(3×12) | velocity_history(2×12) | action_history_offset(2×12)`. DOF position/history fields are absolute joint angles, matching the original C++ ONNX runner.
 
 Joint order: `FL, FR, HL, HR` × `HipX, HipY, Knee`.
 
-Default policy path: `policy/deploy/lite3_policy.onnx`.
+Default policy path: `policy/ppo/policy.onnx`.
 
 Default value locations:
 
-- The default policy path is set in `parseArgs()` in `src/main.zig`.
-- The default robot IP/port is set in `ControllerConfig` in `src/types.zig`: `192.168.2.1:43893`.
+- The default policy path is set in `ControllerConfig` in `src/types.zig`.
+- The default robot IP/port is also set in `ControllerConfig`: `192.168.2.1:43893`.
 
 For long-term default changes, edit the source files above. For temporary overrides, use command-line arguments such as `--policy`, `--robot-ip`, and `--robot-port`.
 
@@ -88,7 +88,7 @@ When running from a PC, also ensure the PC firewall allows inbound UDP `43897`, 
 
 ```bash
 zig-out/bin/lite3-deploy \
-  --policy policy/deploy/lite3_policy.onnx \
+  --policy policy/ppo/policy.onnx \
   --robot-ip <motion-host-ip> \
   --robot-port 43893
 ```
@@ -99,11 +99,11 @@ zig-out/bin/lite3-deploy \
 
 ```bash
 zig build run -- \
-  --policy policy/deploy/lite3_policy.onnx \
+  --policy policy/ppo/policy.onnx \
   --robot-ip 192.168.2.1
 ```
 
-Keyboard commands require pressing Enter:
+Default command input is the original Retroid UDP gamepad on port `12121` (`Y` stand, `A` RL, both stick buttons damping). Use `--keyboard` for stdin keyboard input; when a TTY is available it uses raw mode, so no Enter is needed:
 
 - `z`: Idle → StandUp
 - `c`: StandUp → RLControl
@@ -118,12 +118,12 @@ Common arguments:
 ```bash
 # Automatically stand up and enter RL with a fixed velocity command
 zig-out/bin/lite3-deploy \
-  --policy policy/deploy/lite3_policy.onnx \
+  --policy policy/ppo/policy.onnx \
   --auto-rl \
   --fixed-command 0.2 0.0 0.0
 
 # Specify PD gains and policy decimation
-zig-out/bin/lite3-deploy --policy policy/deploy/lite3_policy.onnx --kp 20 --kd 0.7 --decimation 12
+zig-out/bin/lite3-deploy --policy policy/ppo/policy.onnx --kp 17 --kd 0.9 --decimation 12
 ```
 
 ## Deploy to the Robot
@@ -136,7 +136,7 @@ Run on the robot:
 
 ```bash
 cd ~/Lite3_rl_deploy_zig
-LD_LIBRARY_PATH=lib ./bin/lite3-deploy --policy policy/deploy/lite3_policy.onnx
+LD_LIBRARY_PATH=lib ./bin/lite3-deploy --policy policy/ppo/policy.onnx
 ```
 
 ## Zig Library Usage
@@ -147,7 +147,7 @@ Other Zig projects can import this library through a `build.zig.zon` dependency:
 const lite3 = @import("lite3_deploy");
 
 var controller = try lite3.Controller.init(allocator, .{
-    .policy_path = "policy/deploy/lite3_policy.onnx",
+    .policy_path = "policy/ppo/policy.onnx",
     .robot_ip = "192.168.2.1",
 });
 defer controller.deinit();

@@ -16,20 +16,20 @@
 |---|---|---:|---|
 | input 0 | `raw_obs` | `[117]` | 未归一化观测 |
 | input 1 | `raw_obs_history` | `[40, 117]` | 未归一化观测历史 |
-| output | `joint_target` | `[12]` | 12 个关节 PD target，单位 rad |
+| output | `policy_action` | `[12]` | 神经网络原始 action |
 
-该默认导出已在 ONNX 内包含观测 scale/clip、action clip/scale、default joint position 与 joint target clamp；Zig 侧只传入 raw observation，不再做 normalizer 处理。
+当前 Zig 版本直接对齐原 C++ 部署行为：ONNX Runtime 读取 `policy_action`，Zig 侧 clip 到 `[-12, 12]`，乘以 `0.25` action scale，加 policy 默认关节 `{0, -1, 1.8}`，最后做 joint target clamp。
 
-观测向量 117 维布局：`commands(3) | rpy(3) | base_angular_velocity(3) | qpos(12) | qvel(12) | position_history(3×12) | velocity_history(2×12) | action_history(2×12)`。
+观测向量 117 维布局：`commands(3) | rpy(3) | base_angular_velocity(3) | qpos(12) | qvel(12) | position_history(3×12) | velocity_history(2×12) | action_history_offset(2×12)`。DOF position/history 字段是绝对关节角，和原 C++ ONNX runner 一致。
 
 关节顺序：`FL, FR, HL, HR` × `HipX, HipY, Knee`。
 
-默认策略路径：`policy/deploy/lite3_policy.onnx`。
+默认策略路径：`policy/ppo/policy.onnx`。
 
 默认值位置：
 
-- 默认 policy 路径在 `src/main.zig` 的 `parseArgs()` 中设置。
-- 默认机器人 IP/端口在 `src/types.zig` 的 `ControllerConfig` 中设置：`192.168.2.1:43893`。
+- 默认 policy 路径在 `src/types.zig` 的 `ControllerConfig` 中设置。
+- 默认机器人 IP/端口也在 `ControllerConfig` 中设置：`192.168.2.1:43893`。
 
 如需长期修改默认值，改上述源码；临时覆盖用命令行参数 `--policy`、`--robot-ip`、`--robot-port`。
 
@@ -88,7 +88,7 @@ sudo ./restart.sh
 
 ```bash
 zig-out/bin/lite3-deploy \
-  --policy policy/deploy/lite3_policy.onnx \
+  --policy policy/ppo/policy.onnx \
   --robot-ip <motion-host-ip> \
   --robot-port 43893
 ```
@@ -99,11 +99,11 @@ zig-out/bin/lite3-deploy \
 
 ```bash
 zig build run -- \
-  --policy policy/deploy/lite3_policy.onnx \
+  --policy policy/ppo/policy.onnx \
   --robot-ip 192.168.2.1
 ```
 
-键盘控制需要按 Enter 生效：
+默认命令输入是原版 Retroid UDP 手柄，端口 `12121`（`Y` 站立、`A` 进入 RL、左右摇杆同时按下阻尼）。stdin 键盘控制可加 `--keyboard`；如果 stdin 是 TTY，会启用 raw mode，不需要按 Enter：
 
 - `z`：Idle → StandUp
 - `c`：StandUp → RLControl
@@ -118,12 +118,12 @@ zig build run -- \
 ```bash
 # 自动站立并进入 RL，固定速度命令
 zig-out/bin/lite3-deploy \
-  --policy policy/deploy/lite3_policy.onnx \
+  --policy policy/ppo/policy.onnx \
   --auto-rl \
   --fixed-command 0.2 0.0 0.0
 
 # 指定 PD 增益与 policy decimation
-zig-out/bin/lite3-deploy --policy policy/deploy/lite3_policy.onnx --kp 20 --kd 0.7 --decimation 12
+zig-out/bin/lite3-deploy --policy policy/ppo/policy.onnx --kp 17 --kd 0.9 --decimation 12
 ```
 
 ## 部署到机器人
@@ -136,7 +136,7 @@ ROBOT_HOST=ysc@192.168.2.1 ./scripts/deploy_to_robot.sh
 
 ```bash
 cd ~/Lite3_rl_deploy_zig
-LD_LIBRARY_PATH=lib ./bin/lite3-deploy --policy policy/deploy/lite3_policy.onnx
+LD_LIBRARY_PATH=lib ./bin/lite3-deploy --policy policy/ppo/policy.onnx
 ```
 
 ## Zig 库用法
@@ -147,7 +147,7 @@ LD_LIBRARY_PATH=lib ./bin/lite3-deploy --policy policy/deploy/lite3_policy.onnx
 const lite3 = @import("lite3_deploy");
 
 var controller = try lite3.Controller.init(allocator, .{
-    .policy_path = "policy/deploy/lite3_policy.onnx",
+    .policy_path = "policy/ppo/policy.onnx",
     .robot_ip = "192.168.2.1",
 });
 defer controller.deinit();

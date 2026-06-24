@@ -8,9 +8,9 @@ fi
 
 CHECKPOINT=$1
 shift
-OUTPUT=${1:-policy/deploy/lite3_policy.onnx}
+OUTPUT=${1:-policy/ppo/policy.onnx}
 if [[ $# -gt 0 ]]; then shift; fi
-METADATA=${1:-policy/deploy/lite3_policy.metadata.json}
+METADATA=${1:-policy/ppo/policy.metadata.json}
 if [[ $# -gt 0 ]]; then shift; fi
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -30,9 +30,21 @@ fi
 
 mkdir -p "$(dirname "${OUTPUT_ABS}")" "$(dirname "${METADATA_ABS}")"
 
+EXTRA_ARGS=("$@")
+HAS_POSTPROCESS=0
+for arg in "${EXTRA_ARGS[@]}"; do
+  if [[ "${arg}" == "--postprocess-output" ]]; then
+    HAS_POSTPROCESS=1
+    break
+  fi
+done
+if [[ ${HAS_POSTPROCESS} -eq 0 ]]; then
+  EXTRA_ARGS+=(--postprocess-output policy-action)
+fi
+
 cd "${TRAINING_ROOT}"
 uv run python scripts/export_policy_onnx.py \
   --policy-path "${CHECKPOINT}" \
   --output-path "${OUTPUT_ABS}" \
   --metadata-path "${METADATA_ABS}" \
-  "$@"
+  "${EXTRA_ARGS[@]}"
