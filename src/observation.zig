@@ -44,6 +44,13 @@ pub const ObservationBuilder = struct {
         for (0..types.dof_count) |i| obs[cursor + i] = state.joint_position[i];
         cursor += types.dof_count;
 
+        // The deployed ONNX graph already applies the per-feature obs_scale
+        // (`raw_obs * obs_scale`, see policy.metadata.json preprocess_constants)
+        // to the full 117-D observation, including this single-step qvel block
+        // (obs_scale = 0.1) and the velocity-history blocks below. Feed raw joint
+        // velocities so the network sees 0.1 * qvel exactly like training;
+        // pre-scaling here would double-scale and desynchronize the single-step
+        // block from the velocity history.
         for (0..types.dof_count) |i| obs[cursor + i] = state.joint_velocity[i];
         cursor += types.dof_count;
 
@@ -118,8 +125,9 @@ test "raw observation layout matches original ONNX runner" {
     try std.testing.expectEqual(@as(f32, 1.0), obs[6]);
     try std.testing.expectEqual(types.policy_default_joint_positions[0], obs[9]);
     try std.testing.expectEqual(types.policy_default_joint_positions[1], obs[10]);
-    try std.testing.expectEqual(@as(f32, 0.2), obs[21]);
+    try std.testing.expectEqual(state.joint_velocity[0], obs[21]);
     try std.testing.expectEqual(types.policy_default_joint_positions[0], obs[33]);
+    try std.testing.expectEqual(@as(f32, 0.2), obs[69]);
     try std.testing.expectEqual(@as(f32, 0.0), obs[93]);
 }
 

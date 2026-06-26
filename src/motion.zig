@@ -73,11 +73,15 @@ pub const HardwareInterface = struct {
             imu.angle_pitch * types.degrees_to_radians,
             imu.angle_yaw * types.degrees_to_radians,
         };
-        // Original C++ deploy forwards these values without converting units.
+        // SDK reports angular velocity in degrees/second, but the policy was
+        // trained on radians/second (the reference deploy feeds
+        // `angular_velocity_rad_s` and obs_scales.ang_vel == 1.0, so the value is
+        // not rescaled anywhere). Convert here exactly like the rpy block above;
+        // feeding deg/s would make the policy see a ~57x inflated body rate.
         state.angular_velocity = .{
-            imu.angular_velocity_roll,
-            imu.angular_velocity_pitch,
-            imu.angular_velocity_yaw,
+            imu.angular_velocity_roll * types.degrees_to_radians,
+            imu.angular_velocity_pitch * types.degrees_to_radians,
+            imu.angular_velocity_yaw * types.degrees_to_radians,
         };
         state.linear_acc_m_s2 = .{ imu.acc_x, imu.acc_y, imu.acc_z };
 

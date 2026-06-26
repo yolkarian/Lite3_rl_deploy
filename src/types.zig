@@ -41,12 +41,14 @@ pub const standup_default_joint_positions: JointVector = .{
     0.0, -0.6500, 1.3000,
 };
 
-/// Original ONNX runner policy default from legged-training lite3.yaml.
+/// Policy default joint positions (neutral = action 0 target). Aligned to the
+/// legged-training default_joint_angles and the StandUp final pose
+/// [HipX 0, HipY -0.65, Knee 1.30] so standup -> RL handoff is seamless.
 pub const policy_default_joint_positions: JointVector = .{
-    0.0, -1.0, 1.8,
-    0.0, -1.0, 1.8,
-    0.0, -1.0, 1.8,
-    0.0, -1.0, 1.8,
+    0.0, -0.65, 1.30,
+    0.0, -0.65, 1.30,
+    0.0, -0.65, 1.30,
+    0.0, -0.65, 1.30,
 };
 
 pub const policy_action_scales: JointVector = .{
@@ -104,6 +106,9 @@ pub const UserCommand = struct {
     forward_vel_scale: f32 = 0.0,
     side_vel_scale: f32 = 0.0,
     turnning_vel_scale: f32 = 0.0,
+    rl_kp_delta: f32 = 0.0,
+    rl_kd_delta: f32 = 0.0,
+    print_gains: bool = false,
 };
 
 pub const RobotState = struct {
@@ -136,7 +141,7 @@ pub const Gains = struct {
 
 pub const ControllerConfig = struct {
     policy_path: []const u8 = "policy/ppo/policy.onnx",
-    robot_ip: []const u8 = "192.168.2.1",
+    robot_ip: []const u8 = "192.168.1.120",
     robot_port: u16 = 43893,
     command_mode: CommandMode = .retroid,
     gamepad_port: u16 = 12121,
@@ -144,10 +149,17 @@ pub const ControllerConfig = struct {
     stand_duration_s: f64 = 1.5,
     damping_duration_s: f64 = 3.0,
     clip_actions: f32 = 12.0,
-    max_cmd_vel: Vec3 = .{ 0.8, 0.8, 0.8 },
-    rl_gains: Gains = .{ .kp = 17.0, .kd = 0.9 },
+    max_cmd_vel: Vec3 = .{ 1.0, 1.0, 1.0 },
+    rl_gains: Gains = .{ .kp = 20.0, .kd = 3.0 },
     swing_leg_gains: Gains = .{ .kp = 100.0, .kd = 2.5 },
     damping_gains: Gains = .{ .kp = 0.0, .kd = 2.5 },
+    keyboard_gain_tuning: bool = false,
+    gain_kp_step: f32 = 1.0,
+    gain_kd_step: f32 = 0.1,
+    gain_kp_min: f32 = 0.0,
+    gain_kp_max: f32 = 200.0,
+    gain_kd_min: f32 = 0.0,
+    gain_kd_max: f32 = 20.0,
     auto_rl: bool = false,
     fixed_command: ?Vec3 = null,
     max_run_time_s: ?f64 = null,

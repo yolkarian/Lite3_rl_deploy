@@ -187,6 +187,29 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run Lite3 hardware deployment executable");
     run_step.dependOn(&run_cmd.step);
 
+    const gain_tune_module = b.createModule(.{
+        .root_source_file = b.path("src/gain_tune_main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .link_libcpp = true,
+    });
+    gain_tune_module.addImport("lite3_deploy", deploy_module);
+
+    const gain_tune_exe = b.addExecutable(.{
+        .name = "lite3-gain-tune",
+        .root_module = gain_tune_module,
+    });
+    b.installArtifact(gain_tune_exe);
+
+    const run_gain_tune_cmd = b.addRunArtifact(gain_tune_exe);
+    run_gain_tune_cmd.step.dependOn(b.getInstallStep());
+    run_gain_tune_cmd.setEnvironmentVariable("LD_LIBRARY_PATH", b.getInstallPath(.lib, ""));
+    if (b.args) |args| run_gain_tune_cmd.addArgs(args);
+
+    const run_gain_tune_step = b.step("run-gain-tune", "Run Lite3 Kp/Kd gain tuning executable");
+    run_gain_tune_step.dependOn(&run_gain_tune_cmd.step);
+
     const unit_tests = b.addTest(.{ .root_module = deploy_module });
     const test_cmd = b.addRunArtifact(unit_tests);
     test_cmd.step.dependOn(b.getInstallStep());

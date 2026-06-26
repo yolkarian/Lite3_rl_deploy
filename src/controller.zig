@@ -27,7 +27,9 @@ pub const Controller = struct {
     rl_run_count: i64 = -1,
     process_start_ns: i128 = 0,
     freq_window_start_ns: i128 = 0,
-    freq_window_count: u64 = 0,
+    state_window_count: u64 = 0,
+    send_window_count: u64 = 0,
+    policy_window_count: u64 = 0,
 
     pub fn init(allocator: std.mem.Allocator, config: types.ControllerConfig) !Controller {
         var robot = try motion.HardwareInterface.init(allocator, config.robot_ip, config.robot_port);
@@ -82,7 +84,7 @@ pub const Controller = struct {
 
             const user_command = self.command_source.poll(self.state);
             try self.step(state, user_command);
-            self.printControlFrequency();
+            self.printFrequencies();
         }
     }
 
@@ -131,7 +133,7 @@ pub const Controller = struct {
             self.idle_last_print_time_s = robot_state.timestamp_s;
         }
 
-        try self.robot.send(types.zeroCommand());
+        try self.sendCommand(types.zeroCommand());
 
         if (!joint_normal or !imu_normal) {
             if (self.tick_count % 1000 == 0) std.debug.print("joint status: {} | imu status: {}\n", .{ joint_normal, imu_normal });
@@ -148,7 +150,7 @@ pub const Controller = struct {
     fn runStand(self: *Controller, robot_state: types.RobotState, user_command: types.UserCommand) !void {
         const elapsed = robot_state.timestamp_s - self.state_enter_time_s;
         const command = standup.commandAt(self.config, self.stand_start_position, self.stand_start_velocity, elapsed);
-        try self.robot.send(command);
+        try self.sendCommand(command);
 
         if (user_command.target_mode == .joint_damping) {
             self.transition(.joint_damping, robot_state);
@@ -172,6 +174,8 @@ pub const Controller = struct {
             return;
         }
 
+        self.applyGainTuning(user_command);
+
         self.rl_run_count += 1;
         if (@mod(self.rl_run_count, @as(i64, @intCast(self.config.policy_decimation))) != 0) return;
 
@@ -185,6 +189,7 @@ pub const Controller = struct {
 
         const start_ns = monotonicNano();
         self.last_policy_target = try self.policy.run(&raw_obs, &self.obs_builder.obs_history);
+        self.policy_window_count += 1;
         const end_ns = monotonicNano();
         self.last_policy_cost_ms = @as(f64, @floatFromInt(end_ns - start_ns)) / @as(f64, std.time.ns_per_ms);
 
@@ -194,7 +199,7 @@ pub const Controller = struct {
 
         var low_level = types.zeroCommand();
         for (0..types.dof_count) |index| low_level[index] = positionCommand(self.config.rl_gains, self.last_policy_target[index], 0.0);
-        try self.robot.send(low_level);
+        try self.sendCommand(low_level);
 
         if (@mod(self.rl_run_count, 1000) == 0) {
             std.debug.print("\nrl tick={} cmd=({d:.2},{d:.2},{d:.2}) ort={d:.3}ms qdes0={d:.3}\n", .{
@@ -208,28 +213,57 @@ pub const Controller = struct {
         }
     }
 
+    fn applyGainTuning(self: *Controller, user_command: types.UserCommand) void {
+        const has_delta = user_command.rl_kp_delta != 0.0 or user_command.rl_kd_delta != 0.0;
+        if (!has_delta and !user_command.print_gains) return;
+
+        if (user_command.rl_kp_delta != 0.0) {
+            self.config.rl_gains.kp = types.clamp(self.config.rl_gains.kp + user_command.rl_kp_delta, self.config.gain_kp_min, self.config.gain_kp_max);
+        }
+        if (user_command.rl_kd_delta != 0.0) {
+            self.config.rl_gains.kd = types.clamp(self.config.rl_gains.kd + user_command.rl_kd_delta, self.config.gain_kd_min, self.config.gain_kd_max);
+        }
+
+        std.debug.print("\n[gain-tune] Kp={d:.3} Kd={d:.3}\n", .{ self.config.rl_gains.kp, self.config.rl_gains.kd });
+    }
+
     fn runDamping(self: *Controller, robot_state: types.RobotState) !void {
         var command = types.zeroCommand();
         for (0..types.dof_count) |index| {
             command[index].kp = self.config.damping_gains.kp;
             command[index].kd = self.config.damping_gains.kd;
         }
-        try self.robot.send(command);
+        try self.sendCommand(command);
 
         if (robot_state.timestamp_s - self.state_enter_time_s >= self.config.damping_duration_s) {
             self.transition(.waiting_for_stand, robot_state);
         }
     }
 
-    fn printControlFrequency(self: *Controller) void {
-        self.freq_window_count += 1;
+    fn sendCommand(self: *Controller, command: types.LowLevelCommand) !void {
+        try self.robot.send(command);
+        self.send_window_count += 1;
+    }
+
+    fn printFrequencies(self: *Controller) void {
+        self.state_window_count += 1;
         const now = monotonicNano();
         const elapsed_s = @as(f64, @floatFromInt(now - self.freq_window_start_ns)) / @as(f64, std.time.ns_per_s);
         if (elapsed_s >= 1.0) {
-            const hz = @as(f64, @floatFromInt(self.freq_window_count)) / elapsed_s;
-            std.debug.print("\r[control-freq] {d:.1} Hz\x1b[K", .{hz});
+            const state_hz = @as(f64, @floatFromInt(self.state_window_count)) / elapsed_s;
+            const send_hz = @as(f64, @floatFromInt(self.send_window_count)) / elapsed_s;
+            const policy_hz = @as(f64, @floatFromInt(self.policy_window_count)) / elapsed_s;
+            std.debug.print("\r[freq] rx={d:.1}Hz send={d:.1}Hz policy={d:.1}Hz mode={s} decim={}\x1b[K", .{
+                state_hz,
+                send_hz,
+                policy_hz,
+                stateName(self.state),
+                self.config.policy_decimation,
+            });
             self.freq_window_start_ns = now;
-            self.freq_window_count = 0;
+            self.state_window_count = 0;
+            self.send_window_count = 0;
+            self.policy_window_count = 0;
         }
     }
 };

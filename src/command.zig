@@ -17,6 +17,9 @@ pub const CommandSource = struct {
     last_feedback_state: types.MotionState = .waiting_for_stand,
     auto_rl: bool,
     fixed_command: ?types.Vec3,
+    keyboard_gain_tuning: bool,
+    gain_kp_step: f32,
+    gain_kd_step: f32,
     udp_fd: ?c_int = null,
     stdin_flags: ?c_int = null,
     stdin_termios: ?std.c.termios = null,
@@ -31,6 +34,9 @@ pub const CommandSource = struct {
             .gamepad_port = config.gamepad_port,
             .auto_rl = config.auto_rl,
             .fixed_command = config.fixed_command,
+            .keyboard_gain_tuning = config.keyboard_gain_tuning,
+            .gain_kp_step = config.gain_kp_step,
+            .gain_kd_step = config.gain_kd_step,
         };
         if (config.fixed_command) |cmd| {
             source.command.forward_vel_scale = cmd[0];
@@ -65,6 +71,10 @@ pub const CommandSource = struct {
     }
 
     pub fn poll(self: *CommandSource, feedback_state: types.MotionState) types.UserCommand {
+        self.command.rl_kp_delta = 0.0;
+        self.command.rl_kd_delta = 0.0;
+        self.command.print_gains = false;
+
         if (feedback_state != self.last_feedback_state) {
             self.last_feedback_state = feedback_state;
             self.command.target_mode = feedback_state;
@@ -143,17 +153,29 @@ pub const CommandSource = struct {
 
         const nonblock_flag: c_int = @intCast(@as(u32, @bitCast(std.c.O{ .NONBLOCK = true })));
         _ = std.c.fcntl(std.posix.STDIN_FILENO, std.c.F.SETFL, @as(c_int, flags | nonblock_flag));
-        printKeyboardPrompt(raw_mode_enabled);
+        self.printKeyboardPrompt(raw_mode_enabled);
     }
 
-    fn printKeyboardPrompt(raw_mode_enabled: bool) void {
+    fn printKeyboardPrompt(self: *const CommandSource, raw_mode_enabled: bool) void {
+        const stdin_mode = if (raw_mode_enabled) "raw nonblocking; press keys directly (no Enter)" else "nonblocking; raw TTY mode unavailable";
+        if (self.keyboard_gain_tuning) {
+            std.debug.print(
+                \\  stdin mode: {s}
+                \\  state keys: z = stand, c = enter RL, r = damping
+                \\  RL command is fixed at (0, 0, 0)
+                \\  gain keys in RL: u/j = Kp +/-{d:.3}, i/k = Kd +/-{d:.3}, g = print gains
+                \\
+            , .{ stdin_mode, self.gain_kp_step, self.gain_kd_step });
+            return;
+        }
+
         std.debug.print(
             \\  stdin mode: {s}
             \\  state keys: z = stand, c = enter RL, r = damping
             \\  RL command: w/s = vx +/-0.1, a/d = vy +/-0.1, q/e = yaw +/-0.1
             \\              x or Space = zero velocity
             \\
-        , .{if (raw_mode_enabled) "raw nonblocking; press keys directly (no Enter)" else "nonblocking; raw TTY mode unavailable"});
+        , .{stdin_mode});
     }
 
     fn pollRetroid(self: *CommandSource, feedback_state: types.MotionState) void {
@@ -252,15 +274,29 @@ pub const CommandSource = struct {
                 'c', 'C' => self.command.target_mode = .rl_control,
                 else => {},
             },
-            .rl_control => switch (byte) {
-                'w', 'W' => self.command.forward_vel_scale = types.clamp(self.command.forward_vel_scale + 0.1, -1.0, 1.0),
-                's', 'S' => self.command.forward_vel_scale = types.clamp(self.command.forward_vel_scale - 0.1, -1.0, 1.0),
-                'a', 'A' => self.command.side_vel_scale = types.clamp(self.command.side_vel_scale + 0.1, -1.0, 1.0),
-                'd', 'D' => self.command.side_vel_scale = types.clamp(self.command.side_vel_scale - 0.1, -1.0, 1.0),
-                'q', 'Q' => self.command.turnning_vel_scale = types.clamp(self.command.turnning_vel_scale + 0.1, -1.0, 1.0),
-                'e', 'E' => self.command.turnning_vel_scale = types.clamp(self.command.turnning_vel_scale - 0.1, -1.0, 1.0),
-                'x', 'X', ' ' => self.zeroVelocity(),
-                else => {},
+            .rl_control => {
+                if (self.keyboard_gain_tuning) {
+                    switch (byte) {
+                        'u', 'U' => self.command.rl_kp_delta += self.gain_kp_step,
+                        'j', 'J' => self.command.rl_kp_delta -= self.gain_kp_step,
+                        'i', 'I' => self.command.rl_kd_delta += self.gain_kd_step,
+                        'k', 'K' => self.command.rl_kd_delta -= self.gain_kd_step,
+                        'g', 'G' => self.command.print_gains = true,
+                        else => {},
+                    }
+                    return;
+                }
+
+                switch (byte) {
+                    'w', 'W' => self.command.forward_vel_scale = types.clamp(self.command.forward_vel_scale + 0.1, -1.0, 1.0),
+                    's', 'S' => self.command.forward_vel_scale = types.clamp(self.command.forward_vel_scale - 0.1, -1.0, 1.0),
+                    'a', 'A' => self.command.side_vel_scale = types.clamp(self.command.side_vel_scale + 0.1, -1.0, 1.0),
+                    'd', 'D' => self.command.side_vel_scale = types.clamp(self.command.side_vel_scale - 0.1, -1.0, 1.0),
+                    'q', 'Q' => self.command.turnning_vel_scale = types.clamp(self.command.turnning_vel_scale + 0.1, -1.0, 1.0),
+                    'e', 'E' => self.command.turnning_vel_scale = types.clamp(self.command.turnning_vel_scale - 0.1, -1.0, 1.0),
+                    'x', 'X', ' ' => self.zeroVelocity(),
+                    else => {},
+                }
             },
             else => {},
         }

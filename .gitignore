@@ -23,6 +23,10 @@ core
 core.*
 **/tmp/*
 
+# Generated metadata
+metadata.json
+*.metadata.json
+
 # Local environment files
 .env
 .env.*

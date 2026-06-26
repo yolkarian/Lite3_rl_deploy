@@ -14,7 +14,11 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn parseArgs(it: *std.process.Args.Iterator) !deploy.types.ControllerConfig {
-    var config = deploy.types.ControllerConfig{};
+    var config = deploy.types.ControllerConfig{
+        .command_mode = .keyboard,
+        .keyboard_gain_tuning = true,
+        .fixed_command = .{ 0.0, 0.0, 0.0 },
+    };
 
     _ = it.skip();
     while (it.next()) |arg_z| {
@@ -28,24 +32,10 @@ fn parseArgs(it: *std.process.Args.Iterator) !deploy.types.ControllerConfig {
             config.robot_ip = try nextValue(it);
         } else if (std.mem.eql(u8, arg, "--robot-port")) {
             config.robot_port = try std.fmt.parseInt(u16, try nextValue(it), 10);
-        } else if (std.mem.eql(u8, arg, "--command")) {
-            config.command_mode = deploy.types.CommandMode.parse(try nextValue(it)) orelse return OptionsError.InvalidValue;
-        } else if (std.mem.eql(u8, arg, "--keyboard")) {
-            config.command_mode = .keyboard;
-        } else if (std.mem.eql(u8, arg, "--no-command")) {
-            config.command_mode = .none;
-        } else if (std.mem.eql(u8, arg, "--gamepad-port")) {
-            config.gamepad_port = try std.fmt.parseInt(u16, try nextValue(it), 10);
         } else if (std.mem.eql(u8, arg, "--decimation")) {
             config.policy_decimation = try std.fmt.parseInt(u32, try nextValue(it), 10);
         } else if (std.mem.eql(u8, arg, "--auto-rl")) {
             config.auto_rl = true;
-        } else if (std.mem.eql(u8, arg, "--fixed-command")) {
-            config.fixed_command = .{
-                try std.fmt.parseFloat(f32, try nextValue(it)),
-                try std.fmt.parseFloat(f32, try nextValue(it)),
-                try std.fmt.parseFloat(f32, try nextValue(it)),
-            };
         } else if (std.mem.eql(u8, arg, "--max-seconds")) {
             config.max_run_time_s = try std.fmt.parseFloat(f64, try nextValue(it));
         } else if (std.mem.eql(u8, arg, "--clip-actions")) {
@@ -54,12 +44,30 @@ fn parseArgs(it: *std.process.Args.Iterator) !deploy.types.ControllerConfig {
             config.rl_gains.kp = try std.fmt.parseFloat(f32, try nextValue(it));
         } else if (std.mem.eql(u8, arg, "--kd")) {
             config.rl_gains.kd = try std.fmt.parseFloat(f32, try nextValue(it));
+        } else if (std.mem.eql(u8, arg, "--kp-step")) {
+            config.gain_kp_step = try std.fmt.parseFloat(f32, try nextValue(it));
+        } else if (std.mem.eql(u8, arg, "--kd-step")) {
+            config.gain_kd_step = try std.fmt.parseFloat(f32, try nextValue(it));
+        } else if (std.mem.eql(u8, arg, "--kp-range")) {
+            config.gain_kp_min = try std.fmt.parseFloat(f32, try nextValue(it));
+            config.gain_kp_max = try std.fmt.parseFloat(f32, try nextValue(it));
+            if (config.gain_kp_min > config.gain_kp_max) return OptionsError.InvalidValue;
+        } else if (std.mem.eql(u8, arg, "--kd-range")) {
+            config.gain_kd_min = try std.fmt.parseFloat(f32, try nextValue(it));
+            config.gain_kd_max = try std.fmt.parseFloat(f32, try nextValue(it));
+            if (config.gain_kd_min > config.gain_kd_max) return OptionsError.InvalidValue;
         } else {
             std.debug.print("unknown argument: {s}\n", .{arg});
             printHelp();
             return OptionsError.InvalidValue;
         }
     }
+
+    config.command_mode = .keyboard;
+    config.keyboard_gain_tuning = true;
+    config.fixed_command = .{ 0.0, 0.0, 0.0 };
+    config.rl_gains.kp = deploy.types.clamp(config.rl_gains.kp, config.gain_kp_min, config.gain_kp_max);
+    config.rl_gains.kd = deploy.types.clamp(config.rl_gains.kd, config.gain_kd_min, config.gain_kd_max);
     return config;
 }
 
@@ -69,31 +77,34 @@ fn nextValue(it: *std.process.Args.Iterator) ![]const u8 {
 
 fn printHelp() void {
     std.debug.print(
-        \\Lite3 Zig deploy, original C++ behavior port
+        \\Lite3 Kp/Kd gain tuning deploy
         \\
         \\Usage:
-        \\  zig build run -- [options]
+        \\  zig build run-gain-tune -- [options]
+        \\  zig-out/bin/lite3-gain-tune [options]
+        \\
+        \\Behavior:
+        \\  Same Idle -> StandUp -> RLControl flow as lite3-deploy.
+        \\  In RLControl the velocity command is fixed to (0, 0, 0).
+        \\  Keyboard runs in raw nonblocking mode when possible, so no Enter is needed.
         \\
         \\Options:
         \\  --policy PATH                 default: policy/ppo/policy.onnx
         \\  --robot-ip IP                 default: 192.168.1.120
         \\  --robot-port PORT             default: 43893
-        \\  --command MODE                retroid | skydroid | keyboard | none (default retroid)
-        \\  --keyboard                    shortcut for --command keyboard
-        \\  --no-command                  shortcut for --command none
-        \\  --gamepad-port PORT           default: 12121
         \\  --decimation N                default: 12
-        \\  --kp VALUE --kd VALUE          RL PD gains (default 15 / 2)
+        \\  --kp VALUE --kd VALUE          initial RL PD gains (default 17 / 0.9)
+        \\  --kp-step VALUE                keyboard Kp step (default 1.0)
+        \\  --kd-step VALUE                keyboard Kd step (default 0.1)
+        \\  --kp-range MIN MAX             clamp Kp (default 0 / 200)
+        \\  --kd-range MIN MAX             clamp Kd (default 0 / 20)
         \\  --clip-actions VALUE           default: 12.0
         \\  --auto-rl                     auto request StandUp then RLControl
-        \\  --fixed-command VX VY WZ       normalized command in [-1, 1]
         \\  --max-seconds SEC             exit after SEC seconds
         \\
-        \\Retroid: Y=stand, A=RL, left+right stick press=damping, left stick xy, right stick yaw.
-        \\Keyboard (--keyboard): raw stdin when possible; z=stand, c=RL, r=damping,
-        \\                     w/s/a/d/q/e adjust velocity, x or Space zeroes velocity.
+        \\Keyboard:
+        \\  z = stand, c = enter RL, r = damping
+        \\  in RL: u/j = Kp +/- step, i/k = Kd +/- step, g = print gains
         \\
-    ,
-        .{},
-    );
+    , .{});
 }

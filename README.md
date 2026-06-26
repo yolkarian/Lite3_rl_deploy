@@ -20,7 +20,7 @@ The deployment ONNX model must match the default single-sample I/O convention ge
 
 This Zig rewrite follows the original C++ deployment behavior: ONNX Runtime reads `policy_action`, then Zig clips actions to `[-12, 12]`, applies `0.25` action scale, adds policy default joint positions `{0, -1, 1.8}`, and clamps joint targets.
 
-117-dimensional observation layout: `commands(3) | rpy(3) | base_angular_velocity(3) | qpos(12) | qvel(12) | position_history(3×12) | velocity_history(2×12) | action_history_offset(2×12)`. DOF position/history fields are absolute joint angles, matching the original C++ ONNX runner.
+117-dimensional observation layout: `commands(3) | rpy(3) | base_angular_velocity(3) | qpos(12) | qvel(12) | position_history(3×12) | velocity_history(2×12) | action_history(2×12)`. DOF position/history fields are absolute joint angles. The whole 117-D observation (including the single-step `qvel` block and the velocity-history blocks) is fed **raw**; the per-feature `obs_scale` (e.g. `0.1` for velocity blocks) is applied inside the ONNX preprocessing graph, matching training. `base_angular_velocity` is in radians/second; the SDK IMU degrees/second value is converted before being placed in the observation.
 
 Joint order: `FL, FR, HL, HR` × `HipX, HipY, Knee`.
 
@@ -29,7 +29,7 @@ Default policy path: `policy/ppo/policy.onnx`.
 Default value locations:
 
 - The default policy path is set in `ControllerConfig` in `src/types.zig`.
-- The default robot IP/port is also set in `ControllerConfig`: `192.168.2.1:43893`.
+- The default robot IP/port is also set in `ControllerConfig`: `192.168.1.120:43893`.
 
 For long-term default changes, edit the source files above. For temporary overrides, use command-line arguments such as `--policy`, `--robot-ip`, and `--robot-port`.
 
@@ -49,6 +49,7 @@ Build outputs:
 
 - `zig-out/lib/liblite3_deploy.a`
 - `zig-out/bin/lite3-deploy`
+- `zig-out/bin/lite3-gain-tune`: Kp/Kd tuning executable
 - `zig-out/lib/*.so`: copied ONNX Runtime and Lite3 Motion SDK shared libraries
 
 ## Robot Network and Command Console Setup
@@ -56,12 +57,12 @@ Build outputs:
 MotionSDK uses UDP in both directions:
 
 - `lite3-deploy` receives robot state on local UDP port `43897`.
-- `lite3-deploy` sends joint commands to the robot motion host / command console at `--robot-ip --robot-port` (default `192.168.2.1:43893`).
+- `lite3-deploy` sends joint commands to the robot motion host / command console at `--robot-ip --robot-port` (default `192.168.1.120:43893`).
 
 Before running from a development PC, configure the robot motion host:
 
 ```bash
-ssh ysc@192.168.2.1   # or your actual Lite3 user/host
+ssh ysc@192.168.1.120   # or your actual Lite3 user/host
 cd ~/jy_exe/conf
 vim network.toml
 ```
@@ -100,7 +101,7 @@ zig-out/bin/lite3-deploy \
 ```bash
 zig build run -- \
   --policy policy/ppo/policy.onnx \
-  --robot-ip 192.168.2.1
+  --robot-ip 192.168.1.120
 ```
 
 Default command input is the original Retroid UDP gamepad on port `12121` (`Y` stand, `A` RL, both stick buttons damping). Use `--keyboard` for stdin keyboard input; when a TTY is available it uses raw mode, so no Enter is needed:
@@ -126,10 +127,22 @@ zig-out/bin/lite3-deploy \
 zig-out/bin/lite3-deploy --policy policy/ppo/policy.onnx --kp 17 --kd 0.9 --decimation 12
 ```
 
+### Kp/Kd tuning executable
+
+`lite3-gain-tune` uses the same Idle → StandUp → RLControl flow, but forces the RL velocity command to `(0, 0, 0)` and uses the keyboard to adjust gains. It keeps the same raw keyboard mode when stdin is a TTY, so no Enter is needed.
+
+```bash
+zig build run-gain-tune -- --policy policy/ppo/policy.onnx
+# or
+zig-out/bin/lite3-gain-tune --policy policy/ppo/policy.onnx --kp 17 --kd 0.9
+```
+
+Keys: `z` stand, `c` enter RL, `r` damping, then in RL `u/j` adjust Kp, `i/k` adjust Kd, `g` prints current gains.
+
 ## Deploy to the Robot
 
 ```bash
-ROBOT_HOST=ysc@192.168.2.1 ./scripts/deploy_to_robot.sh
+ROBOT_HOST=ysc@192.168.1.120 ./scripts/deploy_to_robot.sh
 ```
 
 Run on the robot:
@@ -137,6 +150,7 @@ Run on the robot:
 ```bash
 cd ~/Lite3_rl_deploy_zig
 LD_LIBRARY_PATH=lib ./bin/lite3-deploy --policy policy/ppo/policy.onnx
+LD_LIBRARY_PATH=lib ./bin/lite3-gain-tune --policy policy/ppo/policy.onnx
 ```
 
 ## Zig Library Usage
@@ -148,7 +162,7 @@ const lite3 = @import("lite3_deploy");
 
 var controller = try lite3.Controller.init(allocator, .{
     .policy_path = "policy/ppo/policy.onnx",
-    .robot_ip = "192.168.2.1",
+    .robot_ip = "192.168.1.120",
 });
 defer controller.deinit();
 try controller.run();

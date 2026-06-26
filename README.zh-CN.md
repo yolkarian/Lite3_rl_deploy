@@ -20,7 +20,7 @@
 
 当前 Zig 版本直接对齐原 C++ 部署行为：ONNX Runtime 读取 `policy_action`，Zig 侧 clip 到 `[-12, 12]`，乘以 `0.25` action scale，加 policy 默认关节 `{0, -1, 1.8}`，最后做 joint target clamp。
 
-观测向量 117 维布局：`commands(3) | rpy(3) | base_angular_velocity(3) | qpos(12) | qvel(12) | position_history(3×12) | velocity_history(2×12) | action_history_offset(2×12)`。DOF position/history 字段是绝对关节角，和原 C++ ONNX runner 一致。
+观测向量 117 维布局：`commands(3) | rpy(3) | base_angular_velocity(3) | qpos(12) | qvel(12) | position_history(3×12) | velocity_history(2×12) | action_history(2×12)`。DOF position/history 字段是绝对关节角。整条 117 维观测（含单步 `qvel` 段与 velocity-history 段）均以**原始值**喂入；逐特征 `obs_scale`（如速度块 `0.1`）由 ONNX 预处理图内部施加，与训练一致。`base_angular_velocity` 单位为弧度/秒；SDK IMU 的度/秒数值在放入观测前已转换。
 
 关节顺序：`FL, FR, HL, HR` × `HipX, HipY, Knee`。
 
@@ -29,7 +29,7 @@
 默认值位置：
 
 - 默认 policy 路径在 `src/types.zig` 的 `ControllerConfig` 中设置。
-- 默认机器人 IP/端口也在 `ControllerConfig` 中设置：`192.168.2.1:43893`。
+- 默认机器人 IP/端口也在 `ControllerConfig` 中设置：`192.168.1.120:43893`。
 
 如需长期修改默认值，改上述源码；临时覆盖用命令行参数 `--policy`、`--robot-ip`、`--robot-port`。
 
@@ -49,6 +49,7 @@ zig build -Dplatform=aarch64 -Doptimize=ReleaseFast
 
 - `zig-out/lib/liblite3_deploy.a`
 - `zig-out/bin/lite3-deploy`
+- `zig-out/bin/lite3-gain-tune`：Kp/Kd 调参程序
 - `zig-out/lib/*.so`：已复制 ONNX Runtime 与 Lite3 Motion SDK 动态库
 
 ## 机器人网络与 command console 设置
@@ -56,12 +57,12 @@ zig build -Dplatform=aarch64 -Doptimize=ReleaseFast
 MotionSDK 使用双向 UDP：
 
 - `lite3-deploy` 在本机 UDP `43897` 端口接收机器人状态。
-- `lite3-deploy` 向机器人运动主机 / command console 的 `--robot-ip --robot-port` 下发关节指令，默认是 `192.168.2.1:43893`。
+- `lite3-deploy` 向机器人运动主机 / command console 的 `--robot-ip --robot-port` 下发关节指令，默认是 `192.168.1.120:43893`。
 
 如果从开发 PC 运行，请先在机器人运动主机上配置：
 
 ```bash
-ssh ysc@192.168.2.1   # 或替换为实际 Lite3 用户/主机
+ssh ysc@192.168.1.120   # 或替换为实际 Lite3 用户/主机
 cd ~/jy_exe/conf
 vim network.toml
 ```
@@ -100,7 +101,7 @@ zig-out/bin/lite3-deploy \
 ```bash
 zig build run -- \
   --policy policy/ppo/policy.onnx \
-  --robot-ip 192.168.2.1
+  --robot-ip 192.168.1.120
 ```
 
 默认命令输入是原版 Retroid UDP 手柄，端口 `12121`（`Y` 站立、`A` 进入 RL、左右摇杆同时按下阻尼）。stdin 键盘控制可加 `--keyboard`；如果 stdin 是 TTY，会启用 raw mode，不需要按 Enter：
@@ -126,10 +127,22 @@ zig-out/bin/lite3-deploy \
 zig-out/bin/lite3-deploy --policy policy/ppo/policy.onnx --kp 17 --kd 0.9 --decimation 12
 ```
 
+### Kp/Kd 调参程序
+
+`lite3-gain-tune` 使用同样的 Idle → StandUp → RLControl 流程，但 RL 速度命令固定为 `(0, 0, 0)`，键盘用于调 Kp/Kd。stdin 是 TTY 时仍使用 raw keyboard mode，不需要按 Enter。
+
+```bash
+zig build run-gain-tune -- --policy policy/ppo/policy.onnx
+# 或
+zig-out/bin/lite3-gain-tune --policy policy/ppo/policy.onnx --kp 17 --kd 0.9
+```
+
+按键：`z` 站立，`c` 进入 RL，`r` 进入阻尼；进入 RL 后 `u/j` 调 Kp，`i/k` 调 Kd，`g` 打印当前增益。
+
 ## 部署到机器人
 
 ```bash
-ROBOT_HOST=ysc@192.168.2.1 ./scripts/deploy_to_robot.sh
+ROBOT_HOST=ysc@192.168.1.120 ./scripts/deploy_to_robot.sh
 ```
 
 机器人端运行：
@@ -137,6 +150,7 @@ ROBOT_HOST=ysc@192.168.2.1 ./scripts/deploy_to_robot.sh
 ```bash
 cd ~/Lite3_rl_deploy_zig
 LD_LIBRARY_PATH=lib ./bin/lite3-deploy --policy policy/ppo/policy.onnx
+LD_LIBRARY_PATH=lib ./bin/lite3-gain-tune --policy policy/ppo/policy.onnx
 ```
 
 ## Zig 库用法
@@ -148,7 +162,7 @@ const lite3 = @import("lite3_deploy");
 
 var controller = try lite3.Controller.init(allocator, .{
     .policy_path = "policy/ppo/policy.onnx",
-    .robot_ip = "192.168.2.1",
+    .robot_ip = "192.168.1.120",
 });
 defer controller.deinit();
 try controller.run();
